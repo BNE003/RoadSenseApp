@@ -57,37 +57,40 @@ RoadSenseApp/                         repo root
     RoadSense.xcodeproj
     RoadSense/                        app target (synchronized folder)
       App/
-        RoadSenseApp.swift
-        AppEnvironment.swift          service container; .live / .mock
-        AppRouter.swift               tab selection, presented covers, stack paths
-        RootView.swift                tab container + RSTabBar placement
+        RoadSenseApp.swift            entry point, registers fonts, builds the environment
+        AppEnvironment.swift          service container; .mock (M1), .live() from M2
+        AppRouter.swift               selected tab, map focus, inspection cover
+        RootView.swift                tab container, RSTabBar, inspection full-screen cover
+        LaunchOptions.swift           DEBUG launch arguments (-RS_SCREEN, -RS_CAMERA_DENIED)
       DesignSystem/
-        Tokens/                       Color+RS, Typography, Spacing
-        Components/                   RSRule, RSBlockButton, RSStatTile, RSSegmentedFilter,
-                                      RSSquareToggle, RSSectionHeader, RSListRow, RSTabBar, RSWordmark
+        Tokens/                       Colors, Typography (Archivo), Layout
+        Components/                   RSRule, RSBlockButton, RSStatTile, RSSegmentedControl, RSSquareToggle /
+                                      RSToggleRow, RSSectionHeader, RSListRow / RSValueRow, RSBarMeter,
+                                      RSTabBar, RSWordmark, RSStateMessage
       Core/
-        Models/                       Drive, DetectedIssue, IssueKind, Coordinate, DriveStatistics
-        Formatting/                   distance, duration, relative dates
-        Errors/                       CameraError, LocationError, PersistenceError, SyncError
+        Models/                       Drive, DriveSummary, HistoryTotals, DetectedIssue, IssueKind, Coordinate,
+                                      NormalizedRect, MapViewport, MapFocus, MountHeight
+        Formatting/                   DriveFormatting (distance, duration, relative dates)
+        Errors/                       CameraError, LocationError, PersistenceError (SyncError arrives with M3)
       Services/
-        Camera/                       CameraService.swift, MockCameraService.swift, (M2) LiveCameraService
-        Detection/                    DetectionService.swift, MockDetectionService.swift, (M2) LiveDetectionService
-        Location/                     LocationService.swift, MockLocationService.swift, (M2) LiveLocationService
-        Inspection/                   InspectionSession.swift (coordinator), IssueDeduplicator.swift (M2)
-        Sync/                         SyncService.swift, NoopSyncService.swift, (M3) SupabaseSyncService, AuthService
-        Settings/                     SettingsStore.swift (UserDefaults)
-      Persistence/                    DriveRepository.swift, InMemoryDriveRepository.swift (M1),
+        Camera/                       CameraService, MockCameraService, (M2) LiveCameraService
+        Detection/                    DetectionService, MockDetectionService, (M2) LiveDetectionService
+        Location/                     LocationService, MockLocationService, (M2) LiveLocationService
+        Inspection/                   InspectionSession (coordinator), IssueDeduplicator
+        Sync/                         SyncService, NoopSyncService, (M3) SupabaseSyncService, AuthService
+        Settings/                     SettingsStore, UserDefaultsSettingsStore
+      Persistence/                    DriveRepository, InMemoryDriveRepository,
                                       (M2) SwiftData models + SwiftDataDriveRepository
       Features/
         Home/        HomeView, HomeViewModel
-        Inspection/  InspectionView, InspectionViewModel, DetectionOverlay, CameraPreview (M2)
+        Inspection/  InspectionFlowView (live → summary), LiveView, InspectionViewModel, (M2) CameraPreview
         Summary/     SummaryView, SummaryViewModel
-        Map/         IssueMapView, MapViewModel
+        Map/         MapView, MapViewModel
         History/     HistoryView, HistoryViewModel
         Settings/    SettingsView, SettingsViewModel
       Resources/
-        Assets.xcassets, Fonts/, Localizable.xcstrings, (M2) RoadDamage.mlmodelc
-      PreviewSupport/                 sample data builders used by previews and mocks (compiled in app, small)
+        Assets.xcassets, Fonts/ (Archivo, SIL OFL), Localizable.xcstrings, (M2) PotholeDetector.mlpackage
+      PreviewSupport/                 SampleData: the design's drives and issues, used by mocks, previews, tests
     RoadSenseTests/                   unit tests, mirror the folder layout
     RoadSenseUITests/                 smoke flows
 ```
@@ -107,7 +110,7 @@ Rules:
 |---|---|---|
 | **Views** | Render state, forward user intent to view model. | Hold business rules, call services in `body`. |
 | **ViewModels** | Screen state, intent handling, mapping domain → display values; calls services/repositories. | Import SwiftUI view types beyond `Observation`, know concrete service types. |
-| **AppRouter** | Selected tab, per-tab `NavigationPath`, full-screen cover for Inspection, post-drive routing. | Know feature internals. |
+| **AppRouter** | Selected tab, map focus, full-screen cover for Inspection, post-drive routing. | Know feature internals. |
 | **AppEnvironment** | Creates and holds services once; hands them to feature roots. | Contain logic. |
 | **InspectionSession** | Orchestrates one Drive: starts camera/location/detection, merges detections with the latest location, deduplicates, persists issues, exposes a live `State` stream. Owns drive lifecycle (start → recording → finished/failed). | Touch UI; know AVFoundation/Vision specifics. |
 | **CameraService** | Camera permission, session lifecycle, frame stream, preview source. | Run inference. |
@@ -168,7 +171,8 @@ Persistence(Live) ──▶ SwiftData
 Forbidden: Core → anything; Services → Features/DesignSystem/SwiftUI; Features → Apple
 infrastructure frameworks; Features → another Feature's internals.
 
-**DI mechanism:** constructor injection. `AppEnvironment` is a struct of protocol existentials:
+**DI mechanism:** constructor injection. `AppEnvironment` is a struct of protocol existentials plus the
+clock and a `now` function (so time is injectable in tests):
 
 ```swift
 struct AppEnvironment {
@@ -178,15 +182,19 @@ struct AppEnvironment {
     var drives: any DriveRepository
     var settings: any SettingsStore
     var sync: any SyncService
-    var makeInspectionSession: @MainActor () -> InspectionSession
+    var clock: any Clock<Duration>
+    var now: @Sendable () -> Date
 
-    static let mock = AppEnvironment(…)   // M1 default, previews, UI tests
-    static func live() -> AppEnvironment  // M2, M3
+    func makeInspectionSession() -> InspectionSession
+    static func mock(…) -> AppEnvironment      // M1 default, previews, tests, UI tests
+    // static func live() -> AppEnvironment    // M2, M3
 }
 ```
 
-Placed in the SwiftUI environment at the root; each feature root reads it once and builds its view
-model. No service locator calls deeper in the tree. No third-party DI container.
+`RoadSenseApp` creates it and passes it to `RootView`, which hands it to each feature's view model by
+initializer. It is deliberately *not* in the SwiftUI environment: a struct of existentials gains
+nothing from it, and explicit parameters keep dependencies visible. No service locator calls deeper in
+the tree. No third-party DI container.
 
 ## 7. Service protocols (sketch)
 
@@ -194,16 +202,15 @@ Only what Milestones 2 and 3 are known to need.
 
 ```swift
 protocol LocationService: Sendable {
-    var authorization: AsyncStream<LocationAuthorization> { get }
-    func requestAuthorization() async
+    func authorizationUpdates() -> AsyncStream<LocationAuthorization>
+    func requestAuthorization() async -> LocationAuthorization
     func samples() -> AsyncThrowingStream<LocationSample, any Error>   // cancels updates when finished
 }
 
 protocol CameraService: Sendable {
-    var authorization: CameraAuthorization { get async }
-    func requestAuthorization() async -> Bool
+    func requestAuthorization() async -> CameraAuthorization
     func frames() -> AsyncThrowingStream<CameraFrame, any Error>       // newest-wins buffering
-    @MainActor var previewSource: CameraPreviewSource { get }          // opaque; M2 wraps AVCaptureSession
+    // M2 adds an opaque preview source wrapping the AVCaptureSession
 }
 
 protocol DetectionService: Sendable {
@@ -213,24 +220,22 @@ protocol DetectionService: Sendable {
 }
 
 protocol DriveRepository: Sendable {
-    func save(_ drive: Drive) async throws
-    func append(_ issue: DetectedIssue, to driveID: Drive.ID) async throws
-    func drives(limit: Int?) async throws -> [Drive]
-    func drive(id: Drive.ID) async throws -> Drive?
-    func issues(in driveID: Drive.ID?) async throws -> [DetectedIssue]
-    func changes() -> AsyncStream<Void>                                 // coarse "something changed"
-    func pendingSync(limit: Int) async throws -> [SyncRecord]           // used from M3
+    func save(_ drive: Drive) async throws                              // insert or replace
+    func driveSummaries(limit: Int?) async throws -> [DriveSummary]     // newest first, no issues loaded
+    func totals() async throws -> HistoryTotals
+    func issues(focus: MapFocus) async throws -> [DetectedIssue]        // .all or .drive(id)
+    // M2 adds incremental append(issue:to:), recovery of unfinished drives and the sync outbox
 }
 
-protocol SettingsStore { /* typed properties; @MainActor @Observable concrete type is fine */ }
+@MainActor protocol SettingsStore: AnyObject { /* typed properties, UserDefaults-backed */ }
 
 protocol SyncService: Sendable {
-    var status: AsyncStream<SyncStatus> { get }
+    func statusUpdates() -> AsyncStream<SyncStatus>
     func syncNow() async
 }
 ```
 
-`CameraFrame` wraps a `CVPixelBuffer` plus timestamp as `Sendable` (read-only after hand-off).
+`CameraFrame` is a timestamp in M1 and wraps a `CVPixelBuffer` plus timestamp from M2 as `Sendable` (read-only after hand-off).
 `RawDetection` = kind, confidence, normalized rect. Display geometry is derived in the Inspection
 feature, never in the detector.
 
@@ -273,7 +278,7 @@ has no camera). `AppEnvironment.live()` is selected by build configuration or la
 - **Preferences** use `UserDefaults`, not SwiftData.
 - Domain models (sketch): `Drive(id, startedAt, endedAt?, vehicleName, distanceMeters, status,
   route, issues)`, `DetectedIssue(id, driveID, kind, confidence, detectedAt, coordinate,
-  locationQuality, note?)`, `DriveStatistics` (computed from issues).
+  locationQuality, note?)`, `DriveSummary` (counts per kind, computed from issues; also what lists need without loading issues).
 
 ## 10. Camera architecture (M2)
 
@@ -395,15 +400,17 @@ is persisted before any network activity. Logging via `os.Logger` with privacy a
 
 ### Navigation and UI structure
 
-- `RootView` holds the four tabs, each with its own `NavigationStack`, and keeps the design's custom
-  square tab bar (system `TabView` would apply the iOS 26 glass look, which the design does not
-  use ❓ §15).
-- Inspection is a `fullScreenCover`; on stop, the router presents Summary over the same cover (or
-  replaces its content), so the tab bar is hidden for both and the back stack stays simple.
-- Summary "Save" persists the drive then navigates to History/Map; "Done" asks for confirmation if
-  unsaved.
-- The Map is a feature view that takes a `MapFocus` (`all | drive(id) | issue(id)`) and filters
-  from the repository.
+- `RootView` switches between the four screens and keeps the design's custom square tab bar (system
+  `TabView` would apply the iOS 26 glass look, which the design does not use). The design has no
+  push navigation, so there are no per-tab `NavigationStack`s; add one only when a screen needs it.
+- Inspection is a `fullScreenCover` containing `InspectionFlowView`, which shows Live, then Summary
+  (or a failure view), so the tab bar is hidden for the whole flow.
+- Summary "Save" persists the drive then shows History; "View on map" saves, then shows the map
+  focused on that drive; "Done" asks for confirmation if the drive is unsaved.
+- The Map takes a `MapFocus` (`all | drive(id)`) from the router; History rows open the map focused
+  on that drive. The map projects coordinates into the design's canvas through `MapViewport`;
+  coordinates outside the viewport are not drawn (M2 replaces the fixed demo viewport with one fitted
+  to the drive).
 
 ## 15. Open decisions (need owner approval)
 
@@ -412,7 +419,7 @@ is persisted before any network activity. Logging via `os.Logger` with privacy a
 | 1 | **Swift 6 language mode** (project is currently `SWIFT_VERSION = 5.0`). | Enable now, in the first M1 step; the code base is tiny. |
 | 2 | **Deployment target** is iOS 26.0 (Xcode default). Fleet phones may be older. | Lower to iOS 18.0 unless you want iOS 26-only APIs; everything in this plan works on iOS 18 (`@Observable`, SwiftData, `CLLocationUpdate`). |
 | 3 | **Devices & orientation:** iPad is currently enabled; landscape is enabled; the design is portrait. Windshield mounts are often landscape. | iPhone only. Portrait-only UI for M1; decide landscape camera orientation before M2 from a real mount test. |
-| 4 | **Map:** MapKit vs. keeping the stylized drawn map. Because the design is frozen, M1 keeps the drawn map, but makes it data-driven: issues carry real `Coordinate`s which are projected into the map canvas from their bounding box. | Keep the drawn map for M1 (no design change). Revisit MapKit only if you later want a real map; the projection code is the only part that would change. |
+| 4 | **Map:** ✅ decided: keep the drawn map. MapKit vs. keeping the stylized drawn map. Because the design is frozen, M1 keeps the drawn map, but makes it data-driven: issues carry real `Coordinate`s which are projected into the map canvas from their bounding box. | Keep the drawn map for M1 (no design change). Revisit MapKit only if you later want a real map; the projection code is the only part that would change. |
 | 5 | **Persistence:** SwiftData vs. GRDB. | SwiftData behind `DriveRepository`. |
 | 6 | **Tab bar:** keep custom square tab bar vs. system `TabView`. | Keep custom (design fidelity); revisit only if accessibility issues. |
 | 7 | **Font:** bundle Archivo (SIL OFL) vs. system font. | Bundle Archivo (variable font) in M1. |
@@ -425,7 +432,7 @@ is persisted before any network activity. Logging via `os.Logger` with privacy a
 | 14 | **Document location:** repo root vs. inside Xcode project folder. | Repo root (done), keeps docs out of the app bundle and leaves room for `supabase/`. |
 | 15 | **Uncommitted baseline:** the Milestone-0 design UI is not committed yet. | Commit it as a baseline before refactoring, on your request. |
 
-## Appendix A — Current state of the code base (inspected 2026-10-26)
+## Appendix A — State of the code base before Milestone 1 (inspected 2026-10-26)
 
 ~950 lines, one target, no dependencies, flat folder `RoadSense/` with 10 Swift files.
 
@@ -490,3 +497,29 @@ Each step leaves the app building and visually unchanged unless noted.
 10. **Verification:** unit tests green, UI smoke test (start → stop → save → history → map),
     simulator walkthrough against the design, zero warnings, docs reconciled with code,
     acceptance criteria checklist from `REQUIREMENTS.md` ticked.
+
+## Appendix C — Milestone 1 as built
+
+Differences between the plan above and the code, and things to know before Milestone 2:
+
+- **Settings applied:** Swift 6 language mode, deployment target iOS 18.0, iPhone only, portrait only.
+- **No `changes()` stream, no `append`, no per-tab `NavigationStack`:** not needed yet (see §7, §14).
+  M2 adds incremental persistence and recovery of unfinished drives.
+- **`Drive` vs `DriveSummary`:** lists load summaries only. The seeded mock summaries intentionally
+  do not equal the number of seeded map issues (design shows 43 issues over five drives but only
+  seven map pins); real data is consistent because a summary is computed from a drive's issues.
+- **Distance starts at 0.0 km** on a new inspection (the prototype started at 0.4 km); the mock
+  drives at 40 km/h along a straight line inside the demo map viewport.
+- **Mock detection** replays the prototype's pothole/crack/sign timeline; `InspectionSession`
+  de-duplicates sightings, so counters count issues, not frames.
+- **New states built from existing components** (flag for owner review): empty Home/History lists,
+  load-error message with "Try again", camera-denied "Can't start" screen, empty map card, "Discard
+  this drive?" confirmation, GPS "Searching"/"Location off" labels.
+- **Locale:** numbers and dates follow the device region (the simulator uses a German region, so
+  "24,6 km"). The design's English copy is the source language of the string catalog; the catalog
+  fills in when the project is built in Xcode.
+- **Debug launch arguments** (`-RS_SCREEN home|live|summary|map|history|settings`,
+  `-RS_CAMERA_DENIED YES`) exist only in DEBUG builds, for screenshots and UI tests.
+- **Logo:** still the glyph extracted from the design's `logo.png` (see §15 #8).
+- **Tests:** 61 unit tests (Swift Testing) plus 3 UI smoke tests; `ManualClock` and fakes live in
+  `RoadSenseTests/Support/`.

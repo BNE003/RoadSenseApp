@@ -48,7 +48,7 @@ so that Milestone 2 can replace mocks with real implementations without touching
 | M1-T2 | Swift 6 language mode enabled, zero warnings, zero concurrency diagnostics. |
 | M1-T3 | `AppEnvironment` DI container with `.mock` configuration; views/view models contain no hard-coded sample data. |
 | M1-T4 | Service protocols defined and mock-implemented: `LocationService`, `CameraService`, `DetectionService`, `DriveRepository`, `SettingsStore`; `SyncService` protocol stubbed. Protocols contain only what Milestones 2 and 3 are known to need. |
-| M1-T5 | Domain models in `Core/` (`Drive`, `DetectedIssue`, `IssueKind`, `Coordinate`, `DriveStatistics`), `Sendable`, independent of UI and persistence. |
+| M1-T5 | Domain models in `Core/` (`Drive`, `DetectedIssue`, `IssueKind`, `Coordinate`, `DriveSummary`), `Sendable`, independent of UI and persistence. |
 | M1-T6 | Mock detection produces a deterministic, scriptable timeline (the prototype's behavior), driven by an injectable clock so tests do not sleep. |
 | M1-T7 | `DesignSystem` module-in-folder: tokens (color, type, spacing) and reusable components (rule, stat tile, primary block button, segmented filter, square toggle, section header, list row, tab bar, wordmark). Features use no raw hex values. |
 | M1-T8 | Every screen has a working `#Preview`; every view model has unit tests. |

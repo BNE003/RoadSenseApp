@@ -106,10 +106,10 @@ Documentation lives at the repository root, **outside** the app folder, so it is
 
 ## Dependency injection
 
-- `AppEnvironment` (struct of service protocol existentials) is created in `RoadSenseApp`:
-  `.live` for production, `.mock` for Milestone 1 / previews / tests.
-- View models receive their dependencies through `init`. Views obtain them from
-  `@Environment(AppEnvironment.self)` only at the feature's root and pass them down.
+- `AppEnvironment` (struct of service protocol existentials, plus clock and `now`) is created in
+  `RoadSenseApp`: `.mock` in Milestone 1 and for previews/tests, `.live()` from Milestone 2.
+- `RootView` passes it to each feature's view model through `init`; views never read services
+  themselves. It is not placed in the SwiftUI environment.
 - Previews and tests build view models with `.mock` services or a one-off fake. No global state.
 
 ## State management
