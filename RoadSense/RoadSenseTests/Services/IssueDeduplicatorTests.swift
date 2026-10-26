@@ -3,29 +3,29 @@
 //  RoadSenseTests
 //
 
+import Foundation
 import Testing
 @testable import RoadSense
 
 struct IssueDeduplicatorTests {
+    /// Feeds one frame per entry, 0.1 s apart, and returns how many new issues each produced.
+    private func counts(_ frames: [[RawDetection]], step: TimeInterval = 0.1) -> [Int] {
+        var deduplicator = IssueDeduplicator()
+        return frames.enumerated().map { deduplicator.ingest($1, at: Double($0) * step).count }
+    }
+
     @Test func aPotholeSeenForSeveralFramesIsOneIssue() {
-        var deduplicator = IssueDeduplicator()
-        let counts = (0..<4).map { _ in deduplicator.ingest([.pothole()]).count }
-        #expect(counts == [1, 0, 0, 0])
+        #expect(counts(Array(repeating: [.pothole()], count: 4)) == [1, 0, 0, 0])
     }
 
-    @Test func aPotholeReappearingLaterIsANewIssue() {
-        var deduplicator = IssueDeduplicator()
-        _ = deduplicator.ingest([.pothole()])
-        _ = deduplicator.ingest([])
-        _ = deduplicator.ingest([])   // second missed frame closes the track
-        #expect(deduplicator.ingest([.pothole()]).count == 1)
+    @Test func aPotholeReappearingAfterTheGapIsANewIssue() {
+        // Gone for 3 s, longer than a track waits.
+        #expect(counts([[.pothole()], [], [], [.pothole()]], step: 1) == [1, 0, 0, 1])
     }
 
-    @Test func oneMissedFrameDoesNotSplitAnIssue() {
-        var deduplicator = IssueDeduplicator()
-        _ = deduplicator.ingest([.pothole()])
-        _ = deduplicator.ingest([])
-        #expect(deduplicator.ingest([.pothole()]).isEmpty)
+    @Test func aDetectorThatFlickersDoesNotSplitAnIssue() {
+        // Three missed frames in a row (0.3 s) used to close the track.
+        #expect(counts([[.pothole()], [], [], [], [.pothole()]]) == [1, 0, 0, 0, 0])
     }
 
     @Test func differentKindsAtTheSamePlaceAreSeparateIssues() {
@@ -34,21 +34,35 @@ struct IssueDeduplicatorTests {
         let fresh = deduplicator.ingest([
             RawDetection(kind: .pothole, confidence: 0.9, rect: rect),
             RawDetection(kind: .crack, confidence: 0.9, rect: rect),
-        ])
+        ], at: 0)
         #expect(fresh.count == 2)
     }
 
     @Test func separateBoxesOfTheSameKindAreSeparateIssues() {
-        var deduplicator = IssueDeduplicator()
-        let fresh = deduplicator.ingest([.pothole(x: 0.1), .pothole(x: 0.7)])
-        #expect(fresh.count == 2)
+        #expect(counts([[.pothole(x: 0.1), .pothole(x: 0.7)]]) == [2])
     }
 
     @Test func aMovingBoxKeepsItsIdentity() {
+        #expect(counts([[.pothole(x: 0.40)], [.pothole(x: 0.42)], [.pothole(x: 0.44)]]) == [1, 0, 0])
+    }
+
+    @Test func aFastMovingBoxIsFollowedByItsMotion() {
+        // Moves 0.15 per frame (box width 0.2): each step alone overlaps little, the motion is steady.
+        let frames = (0..<6).map { [RawDetection.pothole(x: 0.05 + 0.15 * Double($0))] }
+        #expect(counts(frames) == [1, 0, 0, 0, 0, 0])
+    }
+
+    @Test func aSmallBoxInsideALargeBoxIsTheSameObject() {
+        let large = RawDetection(kind: .pothole, confidence: 0.8, rect: NormalizedRect(x: 0.3, y: 0.5, width: 0.4, height: 0.3))
+        let inner = RawDetection(kind: .pothole, confidence: 0.5, rect: NormalizedRect(x: 0.4, y: 0.58, width: 0.15, height: 0.1))
+        #expect(counts([[large, inner], [inner], [large]]) == [1, 0, 0])
+    }
+
+    @Test func theMostConfidentBoxOfAFrameIsTheOneReported() {
         var deduplicator = IssueDeduplicator()
-        _ = deduplicator.ingest([.pothole(x: 0.40)])
-        #expect(deduplicator.ingest([.pothole(x: 0.42)]).isEmpty)
-        #expect(deduplicator.ingest([.pothole(x: 0.44)]).isEmpty)
+        let weak = RawDetection(kind: .pothole, confidence: 0.4, rect: NormalizedRect(x: 0.4, y: 0.58, width: 0.15, height: 0.1))
+        let strong = RawDetection(kind: .pothole, confidence: 0.9, rect: NormalizedRect(x: 0.3, y: 0.5, width: 0.4, height: 0.3))
+        #expect(deduplicator.ingest([weak, strong], at: 0).map(\.confidence) == [0.9])
     }
 }
 

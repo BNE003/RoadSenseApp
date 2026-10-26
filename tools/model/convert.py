@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Converts best.pt (peterhdd/pothole-detection-yolov8) to the Core ML package the app bundles.
+"""Converts the pothole detector's PyTorch weights to the Core ML package the app bundles.
 
 Build-time tool only: Ultralytics and coremltools are never app dependencies.
 
     python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-    .venv/bin/python convert.py            # best.pt -> PotholeDetector.mlpackage + model.json
+    .venv/bin/python convert.py            # weights -> PotholeDetector.mlpackage + model.json
 
 The output goes to RoadSense/RoadSense/Resources/Models/ unless --out is given.
 """
@@ -19,14 +19,20 @@ from ultralytics import YOLO
 HERE = Path(__file__).resolve().parent
 DEFAULT_OUT = HERE.parent.parent / "RoadSense" / "RoadSense" / "Resources" / "Models"
 
-# The checkpoint names its only class "0". The app's kind comes from the class index, so the
-# mapping lives here and in model.json, not in Swift.
-CLASS_KINDS = {0: "pothole"}
+# Which app kind a class name stands for (lower case). The mapping lives here and in model.json, not
+# in Swift. Classes missing from this table (e.g. "Other") are exported but ignored by the app.
+KIND_BY_CLASS_NAME = {
+    "pothole": "pothole",
+    "potholes": "pothole",
+    "longitudinal crack": "crack",
+    "transverse crack": "crack",
+    "alligator crack": "crack",
+}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--weights", type=Path, default=HERE / "best.pt")
+    parser.add_argument("--weights", type=Path, default=HERE / "best-3.pt")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = parser.parse_args()
 
@@ -44,11 +50,12 @@ def main() -> None:
 
     metadata = {
         "name": "PotholeDetector",
-        "source": "peterhdd/pothole-detection-yolov8",
+        "source": args.weights.name,
         "inputSize": imgsz,
         "classes": [
-            {"index": index, "name": model.names[index], "kind": CLASS_KINDS[index]}
+            {"index": index, "name": model.names[index], "kind": KIND_BY_CLASS_NAME[model.names[index].lower()]}
             for index in sorted(model.names)
+            if model.names[index].lower() in KIND_BY_CLASS_NAME
         ],
         "ultralyticsVersion": train_args.get("version") or model.ckpt.get("version"),
     }

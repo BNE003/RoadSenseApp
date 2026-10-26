@@ -305,10 +305,10 @@ has no camera). `AppEnvironment.live()` is selected by build configuration or la
 - `LiveDetectionService` is an `actor`. It loads a Core ML model compiled in the bundle, wrapped in
   `VNCoreMLModel`, and runs `VNCoreMLRequest` through `VNImageRequestHandler` with the frame's
   pixel buffer.
-- **Model (decided):** `peterhdd/pothole-detection-yolov8` on Hugging Face: YOLOv8s fine-tuned
-  for one class, `pothole`; 100 epochs on `Ryukijano/Pothole-detection-Yolov8`; 22.5 MB.
-  Published files are `best.pt` (PyTorch) and `best.onnx`; **there is no Core ML file**, so we
-  convert: `yolo export model=best.pt format=coreml nms=True half=True imgsz=<training size>`
+- **Model (current):** `best-3.pt`, YOLOv8s on the RDD road-damage dataset: Longitudinal, Transverse
+  and Alligator Crack (all mapped to `crack`), Pothole, Other (ignored). It replaced
+  `peterhdd/pothole-detection-yolov8`. PyTorch weights only, so we convert:
+  `yolo export model=<weights>.pt format=coreml nms=True half=True imgsz=<training size>`
   (Ultralytics + coremltools, run offline from `tools/model/`, output committed as
   `Resources/PotholeDetector.mlpackage`; the Ultralytics Python package is a build-time tool only,
   never part of the app). The card does not state the input size or metrics; read both from the
@@ -331,10 +331,18 @@ has no camera). `AppEnvironment.live()` is selected by build configuration or la
   it, a region-of-interest crop to the road area (excludes dashboard/hood; depends on mount height
   and orientation).
 - **Output:** `[RawDetection]` with normalized (0…1) rectangles in image space.
-- **Deduplication (in `InspectionSession`/`IssueDeduplicator`, not in the detector):** a sighting
-  becomes a new issue unless an open issue of the same kind has a box IoU above a threshold in the
-  previous N frames, or was recorded within X meters and Y seconds. Pure logic, fully unit-tested
-  with synthetic sequences.
+- **Deduplication (in `InspectionSession`/`IssueDeduplicator`, not in the detector):** a pure
+  tracker, fed with each processed frame's detections and its timestamp. A detection continues a
+  track of the same kind if it overlaps the track's last box or its motion-extrapolated box
+  (IoU ≥ 0.2), lies mostly inside it (≥ 70 % of the smaller box), or appears within one box length
+  of it (near the car the image motion accelerates). A track waits 2 s for its object, not a fixed
+  number of frames, so a detector that flickers around its threshold does not split one pothole into
+  several; two boxes on one object in the same frame count once (the most confident defines it).
+  `DeduplicationSimulationTests` drives 200 simulated passes at a pothole with random misses, jitter
+  and second boxes: the old tracker (1 missed frame, IoU ≥ 0.3 on the last box) produced 7.3 issues
+  per pothole on average (up to 12); the current one produces exactly 1. Not covered: two real
+  potholes that overlap in the image are merged; the same pothole passed twice more than 2 s apart
+  counts twice.
 - **Mock (M1):** `MockDetectionService` replays a scripted `[ScriptedDetection(at:, kind:, rect:)]`
   against an injectable `Clock`. The prototype's pothole/sign/crack sequence becomes the default
   script.
@@ -430,7 +438,7 @@ is persisted before any network activity. Logging via `os.Logger` with privacy a
 | 7 | **Font:** bundle Archivo (SIL OFL) vs. system font. | Bundle Archivo (variable font) in M1. |
 | 8 | **Logo:** the extracted `logo.png` glyph strongly resembles a third-party AI brand mark. | Confirm it is intended; otherwise provide the final logo. |
 | 9 | **Localization:** English only or English + German from the start. | Use a String Catalog now, English source; German added when requested. |
-| 10 | **AI model:** ✅ chosen: `peterhdd/pothole-detection-yolov8` (pothole only). Open: (a) **AGPL/Ultralytics license** vs. the card's Apache-2.0 for a commercial product; (b) how cracks and signs are handled (UI shows only supported kinds in M2); (c) accuracy targets after our own validation. | Proceed with development; resolve (a) before any customer release. Hide cracks/signs in production UI until a model exists. |
+| 10 | **AI model:** ✅ chosen: `best-3.pt` (cracks and potholes; replaced the peterhdd model). Open: (a) **AGPL/Ultralytics license** for a commercial product, and the licence of these weights (not checked); (b) how cracks and signs are handled (UI shows only supported kinds in M2); (c) accuracy targets after our own validation. | Proceed with development; resolve (a) before any customer release. Hide cracks/signs in production UI until a model exists. |
 | 11 | **Evidence images & privacy** (faces, license plates, GDPR). | Default: no images stored. Decide with data-protection input before M3. |
 | 12 | **Backend & auth:** no Supabase project exists yet; owner will provide the structure before Milestone 3. M2 therefore designs the local records without knowing the server schema (generic UUID identity, `syncState`, timestamps), and M3 starts by reconciling local models with the delivered schema, which may need a SwiftData migration. Still open: tenant model (org/vehicle), auth method. | Org → vehicle → drive; email+password or magic link for pilot. No Supabase code and no schema assumptions beyond UUID identity before M3. |
 | 13 | **Background location:** needed? | Assume not (screen stays on in a mounted phone). Validate in pilot. |
@@ -533,19 +541,32 @@ Differences between the plan above and the code, and things to know before Miles
 
 What exists, how it differs from §7 to §12, and what is **not** verified yet.
 
-**Model (facts measured from `best.pt`, not from the model card)**
+**Model (facts measured from the checkpoint)**
 
-- Input 640 × 640, one class whose label is `"0"` (not `pothole`); `model.json` maps label → kind.
+- Current: `best-3.pt` (YOLOv8s, Ultralytics 8.4.71, Kaggle, 100 epochs, 640 × 640, RDD data):
+  classes Longitudinal Crack, Transverse Crack, Alligator Crack, Pothole, Other. Checkpoint metrics
+  over all classes: precision 0.66, recall 0.58, mAP@0.5 0.63 (per class not available). The file is
+  byte-identical to the earlier `best-2.pt`.
+- **It does not find potholes on the photos tried.** On 5 close-up pothole photos (water-filled
+  potholes from the validation montage published with `peterhdd/...`) it reported none even at
+  conf 0.05, where YOLOv8m and YOLOv9c found them at 0.8 to 0.9. Those photos differ from the RDD
+  domain, so this says little about windshield footage; it needs validation on real footage before
+  anyone relies on its pothole class. Its crack classes do fire (alligator, transverse).
+- Previous models, all replaced: `peterhdd/pothole-detection-yolov8` (mAP@0.5 0.39); YOLOv8m
+  (`Yolov8-fintuned-on-potholes.pt`, mAP@0.5 0.69); YOLOv9c (`yolov9c.pt`, one class, mAP@0.5
+  0.79, 25.5 M parameters). Their files are still in `tools/model/`.
 - Exported by `tools/model/convert.py` (Ultralytics 8.4.189, coremltools 9.0, FP16, NMS inside the
-  package) to `Resources/Models/PotholeDetector.mlpackage` plus `model.json`. Re-run the script to
-  replace the model; `requirements.txt` pins the tools. Core ML output matches PyTorch: box
-  difference ≤ 0.0013 (normalized) on 16 validation tiles, and `LiveDetectionServiceTests` checks
-  the full pipeline against a PyTorch reference box (IoU > 0.85).
-- **Quality warning.** The checkpoint's own validation metrics are precision 0.59, recall 0.33,
-  mAP@0.5 0.39 (the confusion matrix on the model card agrees: 99 hits, 187 misses, 70 false
-  alarms). That is below the 0.6 placeholder target in REQUIREMENTS M2 acceptance 5. The training
-  images are mostly close-range road photos, not windshield footage. Expect many misses and some
-  false alarms until it is validated on footage from the real mount, and possibly fine-tuned.
+  package) to `Resources/Models/PotholeDetector.mlpackage` plus `model.json`. Class names map to
+  app kinds by name in the script; unmapped classes are ignored. Re-run it to replace the model
+  (`--weights` selects the file). Core ML output equals PyTorch for the same input, and
+  `LiveDetectionServiceTests` checks the full pipeline against a PyTorch reference box.
+- **Confidence.** The app reads `VNRecognizedObjectObservation.confidence`, the detection score.
+  Do not use `labels[].confidence`: Vision reports it normalized to sum 1 per box (0.999 for a box
+  whose score is 0.41). The exported package's confidence output has 80 columns for 5 classes
+  (unused columns are 0). Scores on borderline images vary by about ±0.15 with the resampling
+  method, even in PyTorch alone.
+- **Caveats.** All metrics are from the training run's own dataset, not windshield footage. The
+  licence of these weights is not checked; the Ultralytics AGPL question (§15 #10) applies too.
 
 **Pipeline**
 

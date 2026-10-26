@@ -1,13 +1,28 @@
 {
   "name": "PotholeDetector",
-  "source": "peterhdd/pothole-detection-yolov8",
+  "source": "best-3.pt",
   "inputSize": 640,
   "classes": [
     {
       "index": 0,
-      "name": "0",
+      "name": "Longitudinal Crack",
+      "kind": "crack"
+    },
+    {
+      "index": 1,
+      "name": "Transverse Crack",
+      "kind": "crack"
+    },
+    {
+      "index": 2,
+      "name": "Alligator Crack",
+      "kind": "crack"
+    },
+    {
+      "index": 3,
+      "name": "Pothole",
       "kind": "pothole"
     }
   ],
-  "ultralyticsVersion": "8.3.237"
+  "ultralyticsVersion": "8.4.71"
 }

@@ -236,9 +236,10 @@ xcodebuild -project RoadSense/RoadSense.xcodeproj -scheme RoadSense \
 
 ## AI model
 
-The detector is `peterhdd/pothole-detection-yolov8` (YOLOv8s, **pothole only**), converted to
-Core ML offline from `best.pt` (script in `tools/model/`, Ultralytics is a build-time tool and never
-an app dependency). Do not assume the model detects cracks or signs. The UI renders only
+The detector is `best-3.pt` (YOLOv8s trained on the RDD road-damage dataset: cracks, pothole,
+other; see `ARCHITECTURE.md` Appendix D), converted to
+Core ML offline (script in `tools/model/`, Ultralytics is a build-time tool and never
+an app dependency). Do not assume the model detects signs, or that it finds potholes reliably (see Appendix D). The UI renders only
 `DetectionService.supportedKinds`. The Ultralytics AGPL license question is open
 (`ARCHITECTURE.md` §15 #10); do not claim the model is cleared for commercial release.
 

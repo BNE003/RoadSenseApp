@@ -226,7 +226,7 @@ final class InspectionSession {
                 lastInference = frame.timestamp
                 let detections = try await detection.detect(in: frame, mountHeight: mountHeight)
                 snapshot.boxes = detections.map { LiveBox(kind: $0.kind, rect: $0.rect) }
-                for new in deduplicator.ingest(detections) {
+                for new in deduplicator.ingest(detections, at: frame.timestamp) {
                     let issue = makeIssue(from: new)
                     issues.append(issue)
                     snapshot.counts[issue.kind, default: 0] += 1
