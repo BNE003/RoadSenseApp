@@ -210,7 +210,8 @@ protocol LocationService: Sendable {
 protocol CameraService: Sendable {
     func requestAuthorization() async -> CameraAuthorization
     func frames() -> AsyncThrowingStream<CameraFrame, any Error>       // newest-wins buffering
-    // M2 adds an opaque preview source wrapping the AVCaptureSession
+    var previewSource: CameraPreviewSource? { get }                     // opaque handle on the AVCaptureSession
+    var frameAspectRatio: Double? { get }                               // for placing boxes over the preview
 }
 
 protocol DetectionService: Sendable {
@@ -224,7 +225,11 @@ protocol DriveRepository: Sendable {
     func driveSummaries(limit: Int?) async throws -> [DriveSummary]     // newest first, no issues loaded
     func totals() async throws -> HistoryTotals
     func issues(focus: MapFocus) async throws -> [DetectedIssue]        // .all or .drive(id)
-    // M2 adds incremental append(issue:to:), recovery of unfinished drives and the sync outbox
+    func append(_ issue: DetectedIssue) async throws                    // M2: incremental, crash-safe
+    func checkpoint(driveID:endedAt:distanceMeters:route:) async throws // M2
+    func delete(driveID: Drive.ID) async throws                         // M2
+    func recoverUnfinishedDrives() async throws -> Int                  // M2
+    // M3 adds the sync outbox
 }
 
 @MainActor protocol SettingsStore: AnyObject { /* typed properties, UserDefaults-backed */ }
@@ -523,3 +528,74 @@ Differences between the plan above and the code, and things to know before Miles
 - **Logo:** still the glyph extracted from the design's `logo.png` (see §15 #8).
 - **Tests:** 61 unit tests (Swift Testing) plus 3 UI smoke tests; `ManualClock` and fakes live in
   `RoadSenseTests/Support/`.
+
+## Appendix D — Milestone 2 as built
+
+What exists, how it differs from §7 to §12, and what is **not** verified yet.
+
+**Model (facts measured from `best.pt`, not from the model card)**
+
+- Input 640 × 640, one class whose label is `"0"` (not `pothole`); `model.json` maps label → kind.
+- Exported by `tools/model/convert.py` (Ultralytics 8.4.189, coremltools 9.0, FP16, NMS inside the
+  package) to `Resources/Models/PotholeDetector.mlpackage` plus `model.json`. Re-run the script to
+  replace the model; `requirements.txt` pins the tools. Core ML output matches PyTorch: box
+  difference ≤ 0.0013 (normalized) on 16 validation tiles, and `LiveDetectionServiceTests` checks
+  the full pipeline against a PyTorch reference box (IoU > 0.85).
+- **Quality warning.** The checkpoint's own validation metrics are precision 0.59, recall 0.33,
+  mAP@0.5 0.39 (the confusion matrix on the model card agrees: 99 hits, 187 misses, 70 false
+  alarms). That is below the 0.6 placeholder target in REQUIREMENTS M2 acceptance 5. The training
+  images are mostly close-range road photos, not windshield footage. Expect many misses and some
+  false alarms until it is validated on footage from the real mount, and possibly fine-tuned.
+
+**Pipeline**
+
+`LiveCameraService` (portrait 720p BGRA, `.bufferingNewest(1)`, own serial queue) →
+`InspectionSession` (thermal throttle, 0.1 s / 0.4 s / 1 s between inferences) →
+`LiveDetectionService` (actor): crop `RoadRegion` (depends on mount height), letterbox to 640 with
+`FrameLetterboxer` (Core Image, gray 114 padding), Vision with `.scaleFill`, map boxes back through
+`Letterbox.toSource` and `NormalizedRect.mapped(from:)`. Letterboxing is done by the app, not by
+Vision's `.scaleFit`, so the box mapping is deterministic and unit-tested. Boxes are shown with
+`NormalizedRect.aspectFilled` to match the aspect-fill preview.
+
+**Persistence**
+
+- `SwiftDataDriveRepository` (`@ModelActor`), `RoadSenseSchemaV1` + `RoadSenseMigrationPlan`;
+  `DriveEntity`/`IssueEntity` never leave `Persistence/`. Sync fields (`syncState`, `updatedAt`,
+  `deletedAt`) exist and stay `pending`.
+- Protocol additions: `append`, `checkpoint`, `delete`, `recoverUnfinishedDrives`. `Drive` gained
+  `status` (`inProgress | finished`) and `route`; `DetectedIssue` gained accuracy, speed, heading.
+- Crash safety: the drive is stored `inProgress` before the first frame, each issue is appended
+  immediately, totals are checkpointed every 10 s. The Summary's **Save** finalizes the drive,
+  **Discard** deletes it (M1's behavior is unchanged). A drive still `inProgress` at the next
+  launch is finished by `AppEnvironment.recoverUnfinishedDrives()` and shows up in History.
+  In-progress drives are excluded from lists, totals and the map.
+
+**Wiring**
+
+- `AppEnvironment.live()` is the default on a device; `.mock()` is used when the app runs in the
+  simulator (it has no camera) or with `-RS_USE_MOCKS YES`; `-RS_USE_LIVE YES` forces live in the
+  simulator. If the model or store cannot open, the app shows "Can't start" instead of falling back
+  to mocks (that would silently lose data).
+- Auto-start: `MovementDetector` (3 samples ≥ 4 m/s, re-arms below 1.5 m/s), watched on Home only
+  while location is already authorized and no inspection is open; off for mocks.
+- Alert sound: `AlertService` (system sound), honors the Settings toggle.
+- **Info.plist (build settings):** `INFOPLIST_KEY_NSCameraUsageDescription` and
+  `INFOPLIST_KEY_NSLocationWhenInUseUsageDescription` added to both app configurations.
+- Idle timer disabled while the live screen is shown.
+
+**Not done / not verified (needs a physical iPhone or owner input)**
+
+- Camera preview, real GPS, interruptions (call, backgrounding), thermal behavior and the 30-minute
+  performance budget (M2-T8/T9) are implemented but have **never run on a device**.
+- Battery monitoring: not implemented (thermal throttling is).
+- No banner for degraded states (GPS lost, approximate location only, serious thermal state):
+  issues are saved without coordinates and the pipeline slows down silently. A banner needs a
+  design decision.
+- `RoadRegion` values and the 0.3 confidence threshold are starting values, not tuned.
+- Validation on labelled mounted-phone footage (acceptance 5) and the licence decision (§15 #10).
+- Camera orientation is portrait. A landscape windshield mount is still an open decision (§15 #3).
+- The test fixture `RoadSenseTests/Fixtures/portrait-frame-with-pothole.jpg` is built from a tile of
+  the validation montage published with the model; its image licence is unknown.
+- Gotcha: after changing `AppEnvironment` or other widely used types, run `xcodebuild clean` before
+  testing; a stale incremental build crashed the test host with `swift_retain` bus errors.
+

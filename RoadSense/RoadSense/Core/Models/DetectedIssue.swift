@@ -15,6 +15,12 @@ nonisolated struct DetectedIssue: Identifiable, Hashable, Sendable {
     var detectedAt: Date
     /// `nil` when no acceptable GPS fix was available at detection time.
     var coordinate: Coordinate?
+    /// Quality of the fix `coordinate` came from; `nil` without a fix.
+    var horizontalAccuracy: Double?
+    /// Meters per second.
+    var speed: Double?
+    /// Direction of travel in degrees from north.
+    var heading: Double?
     /// Street or place name, when known.
     var place: String?
     var note: String?

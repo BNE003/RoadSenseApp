@@ -400,6 +400,8 @@
 				DEVELOPMENT_TEAM = V582AWS3L8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "RoadSense uses the camera to see damage on the road ahead. Video is analyzed on the device and is never stored.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "RoadSense uses your location to place detected road damage on the map and to measure the distance driven.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -432,6 +434,8 @@
 				DEVELOPMENT_TEAM = V582AWS3L8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "RoadSense uses the camera to see damage on the road ahead. Video is analyzed on the device and is never stored.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "RoadSense uses your location to place detected road damage on the map and to measure the distance driven.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

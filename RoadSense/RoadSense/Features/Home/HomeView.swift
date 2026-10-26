@@ -7,11 +7,18 @@ import SwiftUI
 
 struct HomeView: View {
     @State private var viewModel: HomeViewModel
+    let isInspectionPresented: Bool
     let onStartInspection: () -> Void
     let onShowHistory: () -> Void
 
-    init(viewModel: HomeViewModel, onStartInspection: @escaping () -> Void, onShowHistory: @escaping () -> Void) {
+    init(
+        viewModel: HomeViewModel,
+        isInspectionPresented: Bool = false,
+        onStartInspection: @escaping () -> Void,
+        onShowHistory: @escaping () -> Void
+    ) {
         _viewModel = State(initialValue: viewModel)
+        self.isInspectionPresented = isInspectionPresented
         self.onStartInspection = onStartInspection
         self.onShowHistory = onShowHistory
     }
@@ -62,6 +69,11 @@ struct HomeView: View {
         }
         .task { await viewModel.load() }
         .task { await viewModel.observeGPS() }
+        // Watching stops while an inspection is open, which has its own location stream.
+        .task(id: isInspectionPresented) {
+            guard !isInspectionPresented else { return }
+            await viewModel.watchForMovement(onMovement: onStartInspection)
+        }
     }
 
     private var statusRow: some View {

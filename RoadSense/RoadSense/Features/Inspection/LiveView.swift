@@ -13,11 +13,18 @@ struct LiveView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                CameraFeedPlaceholder()
+                if let source = viewModel.previewSource {
+                    CameraPreview(source: source)
+                } else {
+                    CameraFeedPlaceholder()
+                }
                 ForEach(Array(viewModel.snapshot.boxes.enumerated()), id: \.offset) { _, box in
+                    let rect = viewModel.displayRect(
+                        for: box.rect, containerAspect: geometry.size.width / max(geometry.size.height, 1)
+                    )
                     DetectionBox(label: box.kind.singularTitle)
-                        .frame(width: box.rect.width * geometry.size.width, height: box.rect.height * geometry.size.height)
-                        .offset(x: box.rect.x * geometry.size.width, y: box.rect.y * geometry.size.height)
+                        .frame(width: rect.width * geometry.size.width, height: rect.height * geometry.size.height)
+                        .offset(x: rect.x * geometry.size.width, y: rect.y * geometry.size.height)
                 }
                 topBar.frame(maxHeight: .infinity, alignment: .top)
                 bottomPanel.frame(maxHeight: .infinity, alignment: .bottom)
@@ -25,7 +32,12 @@ struct LiveView: View {
         }
         .background(Color.rsLiveGround)
         .ignoresSafeArea()
-        .onAppear { pulse = true }
+        .onAppear {
+            pulse = true
+            // The phone is mounted and nobody touches it: the screen must not dim during a drive.
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .task { viewModel.start() }
     }
 
@@ -75,7 +87,7 @@ struct LiveView: View {
     }
 }
 
-/// Stand-in for the camera preview until Milestone 2.
+/// Stand-in for the camera preview where there is no camera (mocks, previews).
 private struct CameraFeedPlaceholder: View {
     var body: some View {
         GeometryReader { geometry in

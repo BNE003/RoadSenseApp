@@ -38,3 +38,15 @@ nonisolated enum PersistenceError: LocalizedError, Sendable {
         }
     }
 }
+
+nonisolated enum DetectionError: LocalizedError, Sendable {
+    case modelMissing
+    case modelFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .modelMissing: String(localized: "The detection model is missing from the app.")
+        case .modelFailed: String(localized: "The detection model could not be started.")
+        }
+    }
+}

@@ -13,6 +13,9 @@ nonisolated struct Drive: Identifiable, Hashable, Sendable {
     var endedAt: Date
     var distanceMeters: Double
     var issues: [DetectedIssue]
+    var status: DriveStatus = .finished
+    /// Downsampled GPS breadcrumb, see `RouteBreadcrumb`.
+    var route: [Coordinate] = []
 
     var duration: TimeInterval { max(0, endedAt.timeIntervalSince(startedAt)) }
 

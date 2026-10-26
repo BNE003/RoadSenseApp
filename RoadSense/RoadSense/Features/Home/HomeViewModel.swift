@@ -15,6 +15,7 @@ final class HomeViewModel {
     private let drives: any DriveRepository
     private let location: any LocationService
     private let settings: any SettingsStore
+    private let watchesMovement: Bool
     private let now: @Sendable () -> Date
 
     private(set) var recent: [DriveSummary] = []
@@ -26,6 +27,7 @@ final class HomeViewModel {
         drives = environment.drives
         location = environment.location
         settings = environment.settings
+        watchesMovement = environment.watchesMovement
         now = environment.now
     }
 
@@ -57,6 +59,26 @@ final class HomeViewModel {
             case .denied: gpsStatus = .denied
             case .notDetermined: gpsStatus = .searching
             }
+        }
+    }
+
+    /// Calls `onMovement` when the vehicle starts driving, if auto-start is on and location is
+    /// already allowed. Never asks for permission itself; that happens when an inspection starts.
+    func watchForMovement(onMovement: () -> Void) async {
+        guard watchesMovement, settings.autoStart else { return }
+        var current: LocationAuthorization = .notDetermined
+        for await authorization in location.authorizationUpdates() {
+            current = authorization
+            break
+        }
+        guard current == .authorized else { return }
+        var detector = MovementDetector()
+        do {
+            for try await sample in location.samples() where detector.ingest(speed: sample.speed) {
+                onMovement()
+            }
+        } catch {
+            // Auto-start is a convenience; without GPS the driver starts by hand.
         }
     }
 }

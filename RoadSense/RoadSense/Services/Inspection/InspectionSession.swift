@@ -29,13 +29,18 @@ final class InspectionSession {
     private let camera: any CameraService
     private let detection: any DetectionService
     private let location: any LocationService
+    private let drives: any DriveRepository
+    private let alerts: any AlertService
     private let settings: any SettingsStore
     private let clock: any Clock<Duration>
     private let now: @Sendable () -> Date
+    private let thermalState: @Sendable () -> ProcessInfo.ThermalState
     private let logger = Logger(subsystem: "b.held.RoadSense", category: "inspection")
 
     /// Fixes older than this many seconds are not used to place an issue.
     private let maxLocationAge = 5
+    /// The running totals of the stored drive are refreshed this often.
+    private let checkpointInterval = 10
 
     private var snapshot = InspectionSnapshot()
     private var issues: [DetectedIssue] = []
@@ -43,22 +48,32 @@ final class InspectionSession {
     private var lastSample: LocationSample?
     private var lastSampleAt = 0
     private var distanceMeters = 0.0
+    private var breadcrumb = RouteBreadcrumb()
+    private var lastInference = -TimeInterval.infinity
+    private var driveID = UUID()
+    private var startedAt = Date()
     private var failure: (any Error)?
 
     init(
         camera: any CameraService,
         detection: any DetectionService,
         location: any LocationService,
+        drives: any DriveRepository,
+        alerts: any AlertService,
         settings: any SettingsStore,
         clock: any Clock<Duration>,
-        now: @escaping @Sendable () -> Date
+        now: @escaping @Sendable () -> Date,
+        thermalState: @escaping @Sendable () -> ProcessInfo.ThermalState = { ProcessInfo.processInfo.thermalState }
     ) {
         self.camera = camera
         self.detection = detection
         self.location = location
+        self.drives = drives
+        self.alerts = alerts
         self.settings = settings
         self.clock = clock
         self.now = now
+        self.thermalState = thermalState
     }
 
     /// Records until the surrounding task is cancelled, then returns the finished drive.
@@ -69,10 +84,17 @@ final class InspectionSession {
         // Location is optional: without a fix issues are stored without coordinates.
         _ = await location.requestAuthorization()
 
-        let driveID = UUID()
-        let startedAt = now()
+        driveID = UUID()
+        startedAt = now()
         let mountHeight = settings.mountHeight
         reset()
+        // Stored before the first frame, so a crash at any moment leaves a recoverable drive.
+        do {
+            try await drives.save(currentDrive(status: .inProgress))
+        } catch {
+            logger.error("Could not store the new drive: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
         onUpdate(snapshot)
 
         let frames = camera.frames()
@@ -83,7 +105,7 @@ final class InspectionSession {
         let clockTask = Task { await self.tick(onUpdate) }
         let locationTask = Task { await self.consume(samples, onUpdate) }
         await withTaskCancellationHandler {
-            await process(frames, driveID: driveID, mountHeight: mountHeight, onUpdate)
+            await process(frames, mountHeight: mountHeight, onUpdate)
         } onCancel: {
             clockTask.cancel()
             locationTask.cancel()
@@ -93,16 +115,14 @@ final class InspectionSession {
         await clockTask.value
         await locationTask.value
 
-        if let failure, issues.isEmpty { throw failure }
-        let endedAt = now()
-        return Drive(
-            id: driveID,
-            name: Drive.defaultName(for: startedAt),
-            startedAt: startedAt,
-            endedAt: endedAt,
-            distanceMeters: distanceMeters,
-            issues: issues
-        )
+        if let failure, issues.isEmpty {
+            await discardStoredDrive()
+            throw failure
+        }
+        // The full drive, so an issue whose incremental write failed is stored too. It stays
+        // in progress until the summary saves it; a quit before that is recovered at next launch.
+        await store(currentDrive(status: .inProgress))
+        return currentDrive(status: .finished)
     }
 
     // MARK: - Pipeline
@@ -114,7 +134,39 @@ final class InspectionSession {
         lastSample = nil
         lastSampleAt = 0
         distanceMeters = 0
+        breadcrumb = RouteBreadcrumb()
+        lastInference = -.infinity
         failure = nil
+    }
+
+    private func currentDrive(status: DriveStatus) -> Drive {
+        Drive(
+            id: driveID,
+            name: Drive.defaultName(for: startedAt),
+            startedAt: startedAt,
+            endedAt: now(),
+            distanceMeters: distanceMeters,
+            issues: issues,
+            status: status,
+            route: breadcrumb.points
+        )
+    }
+
+    private func store(_ drive: Drive) async {
+        do {
+            try await drives.save(drive)
+        } catch {
+            // The drive is still returned to the summary, whose Save tries again.
+            logger.error("Could not store the drive: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func discardStoredDrive() async {
+        do {
+            try await drives.delete(driveID: driveID)
+        } catch {
+            logger.error("Could not remove the empty drive: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func tick(_ onUpdate: @MainActor (InspectionSnapshot) -> Void) async {
@@ -122,6 +174,17 @@ final class InspectionSession {
             do { try await clock.sleep(for: .seconds(1)) } catch { return }
             snapshot.elapsedSeconds += 1
             onUpdate(snapshot)
+            if snapshot.elapsedSeconds.isMultiple(of: checkpointInterval) { await checkpoint() }
+        }
+    }
+
+    private func checkpoint() async {
+        do {
+            try await drives.checkpoint(
+                driveID: driveID, endedAt: now(), distanceMeters: distanceMeters, route: breadcrumb.points
+            )
+        } catch {
+            logger.error("Checkpoint failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -138,6 +201,7 @@ final class InspectionSession {
                     if step >= 3 || sample.speed >= 1 { distanceMeters += step }
                 }
                 lastSample = sample
+                breadcrumb.append(sample.coordinate, at: sample.timestamp)
                 lastSampleAt = snapshot.elapsedSeconds
                 snapshot.distanceMeters = distanceMeters
                 onUpdate(snapshot)
@@ -150,18 +214,24 @@ final class InspectionSession {
 
     private func process(
         _ frames: AsyncThrowingStream<CameraFrame, any Error>,
-        driveID: UUID,
         mountHeight: MountHeight,
         _ onUpdate: @MainActor (InspectionSnapshot) -> Void
     ) async {
         do {
             for try await frame in frames {
+                // A hot phone runs the model less often; skipped frames are simply dropped.
+                guard frame.timestamp - lastInference >= InferenceThrottle.interval(for: thermalState()) else {
+                    continue
+                }
+                lastInference = frame.timestamp
                 let detections = try await detection.detect(in: frame, mountHeight: mountHeight)
                 snapshot.boxes = detections.map { LiveBox(kind: $0.kind, rect: $0.rect) }
                 for new in deduplicator.ingest(detections) {
-                    let issue = makeIssue(from: new, driveID: driveID)
+                    let issue = makeIssue(from: new)
                     issues.append(issue)
                     snapshot.counts[issue.kind, default: 0] += 1
+                    if settings.alertSounds { alerts.playDetectionAlert() }
+                    await save(issue)
                 }
                 onUpdate(snapshot)
             }
@@ -171,15 +241,27 @@ final class InspectionSession {
         }
     }
 
-    private func makeIssue(from detection: RawDetection, driveID: UUID) -> DetectedIssue {
-        let hasFix = lastSample != nil && snapshot.elapsedSeconds - lastSampleAt <= maxLocationAge
+    private func save(_ issue: DetectedIssue) async {
+        do {
+            try await drives.append(issue)
+        } catch {
+            // Kept in memory and written with the whole drive at the end.
+            logger.error("Could not store an issue: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func makeIssue(from detection: RawDetection) -> DetectedIssue {
+        let fix = snapshot.elapsedSeconds - lastSampleAt <= maxLocationAge ? lastSample : nil
         return DetectedIssue(
             id: UUID(),
             driveID: driveID,
             kind: detection.kind,
             confidence: detection.confidence,
             detectedAt: now(),
-            coordinate: hasFix ? lastSample?.coordinate : nil,
+            coordinate: fix?.coordinate,
+            horizontalAccuracy: fix?.horizontalAccuracy,
+            speed: fix.flatMap { $0.speed >= 0 ? $0.speed : nil },
+            heading: fix.flatMap { $0.course >= 0 ? $0.course : nil },
             place: nil,
             note: nil
         )

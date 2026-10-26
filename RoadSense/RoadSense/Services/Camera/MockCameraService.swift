@@ -10,6 +10,9 @@ nonisolated struct MockCameraService: CameraService {
     var authorization: CameraAuthorization = .authorized
     var clock: any Clock<Duration> = ContinuousClock()
 
+    let previewSource: CameraPreviewSource? = nil
+    let frameAspectRatio: Double? = nil
+
     func requestAuthorization() async -> CameraAuthorization { authorization }
 
     func frames() -> AsyncThrowingStream<CameraFrame, any Error> {

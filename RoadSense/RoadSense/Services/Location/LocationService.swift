@@ -17,6 +17,8 @@ nonisolated struct LocationSample: Sendable, Equatable {
     var horizontalAccuracy: Double
     /// Speed in meters per second; negative means unknown.
     var speed: Double
+    /// Direction of travel in degrees from north; negative means unknown.
+    var course = -1.0
     var timestamp: Date
 }
 

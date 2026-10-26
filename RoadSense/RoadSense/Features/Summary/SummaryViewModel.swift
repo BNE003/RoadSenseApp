@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import os
 
 @MainActor @Observable
 final class SummaryViewModel {
@@ -66,6 +67,17 @@ final class SummaryViewModel {
         } catch {
             saveState = .failed(error.localizedDescription)
             return false
+        }
+    }
+
+    /// Removes the drive from the store when the user throws it away.
+    func discard() async {
+        do {
+            try await repository.delete(driveID: drive.id)
+        } catch {
+            // Left in progress; it is finished and listed by recovery at the next launch.
+            Logger(subsystem: "b.held.RoadSense", category: "persistence")
+                .error("Discard failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

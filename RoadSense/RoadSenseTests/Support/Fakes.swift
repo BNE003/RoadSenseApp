@@ -18,6 +18,8 @@ func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
 
 struct FakeCamera: CameraService {
     var authorization: CameraAuthorization = .authorized
+    let previewSource: CameraPreviewSource? = nil
+    let frameAspectRatio: Double? = nil
     private let stream = AsyncThrowingStream<CameraFrame, any Error>.makeStream()
 
     func requestAuthorization() async -> CameraAuthorization { authorization }
@@ -46,6 +48,16 @@ struct FakeDetection: DetectionService {
     func detect(in frame: CameraFrame, mountHeight: MountHeight) async throws -> [RawDetection] {
         detections(frame.timestamp)
     }
+}
+
+/// Counts alerts; the lock makes it safe to share with the session.
+final class RecordingAlerts: AlertService, @unchecked Sendable {
+    // @unchecked: `count` is only touched under `lock`.
+    private let lock = NSLock()
+    private var played = 0
+
+    var count: Int { lock.withLock { played } }
+    func playDetectionAlert() { lock.withLock { played += 1 } }
 }
 
 @MainActor

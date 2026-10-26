@@ -102,7 +102,12 @@ struct SummaryView: View {
             .padding(.bottom, 28)
         }
         .confirmationDialog("Discard this drive?", isPresented: $viewModel.isConfirmingDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive, action: onClose)
+            Button("Discard", role: .destructive) {
+                Task {
+                    await viewModel.discard()
+                    onClose()
+                }
+            }
             Button("Keep editing", role: .cancel) {}
         } message: {
             Text("It has not been saved.")
