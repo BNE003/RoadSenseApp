@@ -421,9 +421,10 @@ is persisted before any network activity. Logging via `os.Logger` with privacy a
 - Summary "Save" persists the drive then shows History; "View on map" saves, then shows the map
   focused on that drive; "Done" asks for confirmation if the drive is unsaved.
 - The Map takes a `MapFocus` (`all | drive(id)`) from the router; History rows open the map focused
-  on that drive. The map projects coordinates into the design's canvas through `MapViewport`;
-  coordinates outside the viewport are not drawn (M2 replaces the fixed demo viewport with one fitted
-  to the drive).
+  on that drive. Since M2 the map is a real MapKit map (owner request), muted to the design's
+  greyscale, with the design's square pins as annotations; `MapRegionFit` frames every pin with
+  room for the header and card, and re-frames when the focus or filter changes. Issues without a
+  GPS fix have no pin. `MapViewport` remains only to place the mock data and the mock route.
 
 ## 15. Open decisions (need owner approval)
 
@@ -432,7 +433,7 @@ is persisted before any network activity. Logging via `os.Logger` with privacy a
 | 1 | **Swift 6 language mode** (project is currently `SWIFT_VERSION = 5.0`). | Enable now, in the first M1 step; the code base is tiny. |
 | 2 | **Deployment target** is iOS 26.0 (Xcode default). Fleet phones may be older. | Lower to iOS 18.0 unless you want iOS 26-only APIs; everything in this plan works on iOS 18 (`@Observable`, SwiftData, `CLLocationUpdate`). |
 | 3 | **Devices & orientation:** iPad is currently enabled; landscape is enabled; the design is portrait. Windshield mounts are often landscape. | iPhone only. Portrait-only UI for M1; decide landscape camera orientation before M2 from a real mount test. |
-| 4 | **Map:** ✅ decided: keep the drawn map. MapKit vs. keeping the stylized drawn map. Because the design is frozen, M1 keeps the drawn map, but makes it data-driven: issues carry real `Coordinate`s which are projected into the map canvas from their bounding box. | Keep the drawn map for M1 (no design change). Revisit MapKit only if you later want a real map; the projection code is the only part that would change. |
+| 4 | **Map:** ✅ superseded: M2 uses a real MapKit map at the owner's request (muted style, same pins, header, filter and card). Earlier decision: keep the drawn map. MapKit vs. keeping the stylized drawn map. Because the design is frozen, M1 keeps the drawn map, but makes it data-driven: issues carry real `Coordinate`s which are projected into the map canvas from their bounding box. | Keep the drawn map for M1 (no design change). Revisit MapKit only if you later want a real map; the projection code is the only part that would change. |
 | 5 | **Persistence:** SwiftData vs. GRDB. | SwiftData behind `DriveRepository`. |
 | 6 | **Tab bar:** keep custom square tab bar vs. system `TabView`. | Keep custom (design fidelity); revisit only if accessibility issues. |
 | 7 | **Font:** bundle Archivo (SIL OFL) vs. system font. | Bundle Archivo (variable font) in M1. |
@@ -478,7 +479,7 @@ light), tests beyond Xcode templates, error/empty/loading states.
 
 **Reusable as is:** color tokens, `RSRule`/`RSVRule`, `RSWordmark`/`RSLogo`, `RSBlockButtonStyle`,
 all screen layouts (views), `IssueKind`, sample data (move to `PreviewSupport`), `SquareToggle`,
-`DetectionBox`, `StylizedMap` (until MapKit decision).
+`DetectionBox`, `StylizedMap` (removed in M2 when the map became MapKit).
 
 **Will need refactoring:** `AppModel` (split), `Models.swift` (split), `ContentView` (becomes
 `RootView` + `AppRouter`), `RSTabBar` (move to DesignSystem), `MapScreenView` (data-driven focus),

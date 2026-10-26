@@ -118,3 +118,30 @@ struct DriveFormattingTests {
         #expect(DriveFormatting.minutes(38 * 60 + 40) == "39")
     }
 }
+
+struct MapRegionFitTests {
+    @Test func noCoordinatesNeedNoRegion() {
+        #expect(MapRegionFit.fitting([]) == nil)
+    }
+
+    @Test func aSinglePinGetsAUsefulZoom() throws {
+        let fit = try #require(MapRegionFit.fitting([Coordinate(latitude: 52.5, longitude: 13.4)]))
+        #expect(fit.center == Coordinate(latitude: 52.5, longitude: 13.4))
+        #expect(abs(fit.latitudeSpan * 111_320 - 500) < 1)
+    }
+
+    @Test func theRegionContainsEveryPinWithRoomToSpare() throws {
+        let south = Coordinate(latitude: 52.50, longitude: 13.30)
+        let north = Coordinate(latitude: 52.60, longitude: 13.50)
+        let fit = try #require(MapRegionFit.fitting([south, north]))
+        #expect(fit.latitudeSpan > 0.10 && fit.longitudeSpan > 0.20)
+        #expect(abs(fit.center.latitude - 52.55) < 1e-9 && abs(fit.center.longitude - 13.40) < 1e-9)
+    }
+
+    @Test func closePinsDoNotZoomBelowTheMinimum() throws {
+        let fit = try #require(MapRegionFit.fitting([
+            Coordinate(latitude: 52.5000, longitude: 13.4000), Coordinate(latitude: 52.5001, longitude: 13.4001),
+        ]))
+        #expect(fit.latitudeSpan * 111_320 >= 499)
+    }
+}

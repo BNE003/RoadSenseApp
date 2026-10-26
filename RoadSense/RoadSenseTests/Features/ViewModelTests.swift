@@ -102,16 +102,45 @@ struct MapViewModelTests {
         #expect(viewModel.filters == [.all, .kind(.pothole)])
     }
 
-    @Test func pinsOutsideTheViewportAreNotShown() async {
+    @Test func issuesWithoutAPositionAreNotOnTheMap() async {
         let repository = InMemoryDriveRepository(issues: [
             DetectedIssue(id: UUID(), driveID: UUID(), kind: .pothole, confidence: 1, detectedAt: Date(),
-                          coordinate: Coordinate(latitude: 0, longitude: 0), place: nil, note: nil),
+                          coordinate: nil, place: nil, note: nil),
         ])
         var environment = AppEnvironment.mock()
         environment.drives = repository
         let viewModel = MapViewModel(environment: environment)
         await viewModel.load(focus: .all)
-        #expect(viewModel.pins.isEmpty)
+        #expect(viewModel.pins.isEmpty && viewModel.region == nil)
+    }
+
+    @Test func issuesAnywhereInTheWorldAreShownAndFramed() async throws {
+        // Hamburg and Munich, far from the demo data's Berlin.
+        let hamburg = Coordinate(latitude: 53.55, longitude: 9.99)
+        let munich = Coordinate(latitude: 48.14, longitude: 11.58)
+        func issue(_ coordinate: Coordinate) -> DetectedIssue {
+            DetectedIssue(id: UUID(), driveID: UUID(), kind: .pothole, confidence: 1, detectedAt: Date(),
+                          coordinate: coordinate, place: nil, note: nil)
+        }
+        var environment = AppEnvironment.mock()
+        environment.drives = InMemoryDriveRepository(issues: [issue(hamburg), issue(munich)])
+        let viewModel = MapViewModel(environment: environment)
+        await viewModel.load(focus: .all)
+
+        #expect(viewModel.pins.count == 2)
+        let region = try #require(viewModel.region)
+        #expect(region.latitudeSpan > 53.55 - 48.14)
+        #expect(abs(region.center.latitude - 50.845) < 0.001)
+    }
+
+    @Test func theMapFollowsTheFilter() async throws {
+        let viewModel = MapViewModel(environment: .mock())
+        await viewModel.load(focus: .all)
+        let all = try #require(viewModel.region)
+        viewModel.setFilter(.kind(.sign))
+        let signsOnly = try #require(viewModel.region)
+        #expect(viewModel.pins.count == 1)
+        #expect(signsOnly != all)
     }
 }
 

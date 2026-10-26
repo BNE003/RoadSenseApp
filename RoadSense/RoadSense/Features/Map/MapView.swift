@@ -3,10 +3,13 @@
 //  RoadSense
 //
 
+import MapKit
 import SwiftUI
 
 struct MapView: View {
     @State private var viewModel: MapViewModel
+    // Without pins the map shows where the phone is, if it may know; otherwise the system default.
+    @State private var position = MapCameraPosition.userLocation(fallback: .automatic)
     let focus: MapFocus
 
     init(viewModel: MapViewModel, focus: MapFocus) {
@@ -15,28 +18,46 @@ struct MapView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .top) {
-                StylizedMap()
-                ForEach(viewModel.pins) { pin in
-                    PinButton(
-                        isSelected: viewModel.selectedID == pin.id,
-                        isPothole: pin.issue.kind == .pothole,
-                        label: Text(pin.issue.kind.singularTitle)
-                    ) { viewModel.select(pin.id) }
-                    .position(x: pin.x * geometry.size.width, y: pin.y * geometry.size.height)
-                }
-                header.frame(maxHeight: .infinity, alignment: .top)
-                if let issue = viewModel.selected {
-                    detailCard(for: issue).frame(maxHeight: .infinity, alignment: .bottom)
-                } else if viewModel.isLoaded {
-                    emptyCard.frame(maxHeight: .infinity, alignment: .bottom)
-                }
+        ZStack(alignment: .top) {
+            map
+            header.frame(maxHeight: .infinity, alignment: .top)
+            if let issue = viewModel.selected {
+                detailCard(for: issue).frame(maxHeight: .infinity, alignment: .bottom)
+            } else if viewModel.isLoaded {
+                emptyCard.frame(maxHeight: .infinity, alignment: .bottom)
             }
         }
         .ignoresSafeArea(edges: .top)
         .foregroundStyle(Color.rsInk)
         .task(id: focus) { await viewModel.load(focus: focus) }
+        .onChange(of: viewModel.region) { _, region in
+            guard let region else { return }
+            position = .region(MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: region.center.latitude, longitude: region.center.longitude),
+                span: MKCoordinateSpan(latitudeDelta: region.latitudeSpan, longitudeDelta: region.longitudeSpan)
+            ))
+        }
+    }
+
+    /// A real map, muted to the design's greyscale, with the design's square pins on top.
+    private var map: some View {
+        Map(position: $position, interactionModes: [.pan, .zoom]) {
+            ForEach(viewModel.pins) { pin in
+                Annotation(
+                    "", coordinate: CLLocationCoordinate2D(latitude: pin.coordinate.latitude, longitude: pin.coordinate.longitude),
+                    anchor: .center
+                ) {
+                    PinButton(
+                        isSelected: viewModel.selectedID == pin.id,
+                        isPothole: pin.issue.kind == .pothole,
+                        label: Text(pin.issue.kind.singularTitle)
+                    ) { viewModel.select(pin.id) }
+                }
+                .annotationTitles(.hidden)
+            }
+        }
+        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll, showsTraffic: false))
+        .mapControls {}
     }
 
     private var header: some View {
@@ -112,42 +133,6 @@ private struct PinButton: View {
         .animation(.easeOut(duration: 0.15), value: isSelected)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-/// The design's greyscale street grid.
-private struct StylizedMap: View {
-    var body: some View {
-        Canvas { context, size in
-            let sx = size.width / 370, sy = size.height / 824
-            func line(_ a: (CGFloat, CGFloat), _ b: (CGFloat, CGFloat), _ width: CGFloat) {
-                var path = Path()
-                path.move(to: CGPoint(x: a.0 * sx, y: a.1 * sy))
-                path.addLine(to: CGPoint(x: b.0 * sx, y: b.1 * sy))
-                context.stroke(path, with: .color(.white), lineWidth: width)
-            }
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.rsMapGround))
-
-            var park = Path()
-            park.move(to: CGPoint(x: -10 * sx, y: 720 * sy))
-            park.addCurve(
-                to: CGPoint(x: 380 * sx, y: 690 * sy),
-                control1: CGPoint(x: 100 * sx, y: 650 * sy),
-                control2: CGPoint(x: 220 * sx, y: 760 * sy)
-            )
-            context.stroke(park, with: .color(.rsMapPark), lineWidth: 30)
-
-            line((-10, 210), (380, 160), 14)
-            line((-10, 420), (380, 470), 14)
-            line((90, -10), (130, 830), 14)
-            line((280, -10), (240, 830), 14)
-            line((-10, 320), (380, 330), 6)
-            line((-10, 600), (380, 580), 6)
-            line((190, -10), (180, 830), 6)
-            line((20, -10), (50, 830), 6)
-            line((340, -10), (320, 830), 6)
-        }
-        .accessibilityHidden(true)
     }
 }
 

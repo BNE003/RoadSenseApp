@@ -64,7 +64,7 @@ so that Milestone 2 can replace mocks with real implementations without touching
 - No `AVCaptureSession`, Vision, Core ML, `CLLocationManager`, SwiftData, Supabase or networking.
 - No real authentication, accounts, or onboarding flow.
 - No iPad-specific layout, dark mode, landscape, widgets, Live Activities, CarPlay.
-- No real map tiles or geocoding: the stylized map from the design stays; issues keep a street label as data.
+- No real map tiles or geocoding in M1: the stylized map from the design stays; issues keep a street label as data. (M2 replaced it with a MapKit map at the owner's request.)
 - No analytics or crash-reporting SDKs.
 
 ### Acceptance criteria

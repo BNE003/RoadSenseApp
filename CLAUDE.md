@@ -7,7 +7,7 @@
 
 The UI was designed in Claude Design and implemented in SwiftUI (project "RoadSense iOS app
 design", `RoadSense.dc.html`). **Do not change the visual design**: layout, colors, typography,
-spacing, copy, the 2 pt rules, the square corners, the custom tab bar and the stylized map stay
+spacing, copy, the 2 pt rules, the square corners, the custom tab bar and the pin style stay
 exactly as they look today. Milestone 1 restructures *code* behind the screens; screenshots
 before and after a refactor must be visually identical. Only a design change requested by the
 owner may alter the look. Missing states the design does not cover (empty, error, permission

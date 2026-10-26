@@ -60,3 +60,14 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# AI model sources (tools/model/)
+# The PyTorch weights are large, their licence is not cleared, and the app only needs the converted
+# Core ML package in RoadSense/RoadSense/Resources/Models/, which stays tracked.
+# convert.py and requirements.txt stay tracked; the Python environment does not.
+*.pt
+*.pth
+*.onnx
+*.safetensors
+tools/**/.venv/
+tools/**/__pycache__/

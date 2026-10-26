@@ -22,8 +22,6 @@ extension Color {
     static let rsBody = Color(hex: 0x3F4B45)
     static let rsMint = Color(hex: 0xB9D6B5)
     static let rsTrack = Color(hex: 0xD9DFD7)
-    static let rsMapGround = Color(hex: 0xE6EBE3)
-    static let rsMapPark = Color(hex: 0xB9CDB4)
     static let rsLiveGround = Color(hex: 0x0F1613)
     // Camera placeholder (replaced by the real preview in Milestone 2)
     static let rsFeedSky = Color(hex: 0x26302B)
